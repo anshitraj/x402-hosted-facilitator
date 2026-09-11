@@ -1,0 +1,318 @@
+name: omniclaw-hosted
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: omniclaw
+      POSTGRES_USER: omniclaw
+      POSTGRES_PASSWORD: ${OMNICLAW_POSTGRES_PASSWORD:-omniclaw}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omniclaw -d omniclaw"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - hosted-postgres-data:/var/lib/postgresql/data
+
+  postgres-auth-init:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: ${OMNICLAW_POSTGRES_PASSWORD:-omniclaw}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    command:
+      [
+        "sh",
+        "-ec",
+        "psql -h postgres -U omniclaw -d omniclaw -v ON_ERROR_STOP=1 -c 'CREATE SCHEMA IF NOT EXISTS keycloak AUTHORIZATION omniclaw;'",
+      ]
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --appendfsync everysec
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - hosted-redis-data:/data
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./infra/otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:8889:8889"
+      - "127.0.0.1:13133:13133"
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/alerts/hosted-facilitator-alerts.yaml:/etc/prometheus/rules/hosted-facilitator-alerts.yaml:ro
+      - hosted-prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1.4
+    command: ["start", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${OMNICLAW_KEYCLOAK_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${OMNICLAW_KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_DB: postgres
+      KC_DB_URL_HOST: postgres
+      KC_DB_URL_DATABASE: omniclaw
+      KC_DB_SCHEMA: keycloak
+      KC_DB_USERNAME: omniclaw
+      KC_DB_PASSWORD: ${OMNICLAW_POSTGRES_PASSWORD:-omniclaw}
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: http://127.0.0.1:8081
+      KC_HOSTNAME_STRICT: "true"
+      KC_PROXY_HEADERS: xforwarded
+    ports:
+      - "127.0.0.1:8081:8080"
+    volumes:
+      - ./infra/auth-bootstrap/keycloak:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres-auth-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -ec 'exec 3<>/dev/tcp/127.0.0.1/8080; printf \"GET /realms/omniclaw/.well-known/openid-configuration HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n\" >&3; head -n 1 <&3 | grep -q \" 200 \"'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 45
+      start_period: 90s
+
+  openfga:
+    image: openfga/openfga:v1.8.13
+    command:
+      [
+        "run",
+        "--datastore-engine",
+        "memory",
+        "--http-addr",
+        "0.0.0.0:8080",
+        "--grpc-addr",
+        "0.0.0.0:8081",
+        "--playground-enabled=false",
+      ]
+    ports:
+      - "127.0.0.1:8082:8080"
+
+  openfga-seed:
+    image: python:3.12-alpine
+    environment:
+      OMNICLAW_OPENFGA_SEED_API_URL: http://openfga:8080
+      OMNICLAW_OPENFGA_SEED_STORE_NAME: omniclaw-facilitator
+      OMNICLAW_OPENFGA_SEED_OPERATOR_SUBJECT: ops-alpha-admin
+      OMNICLAW_OPENFGA_SEED_MODEL_PATH: /work/infra/auth-bootstrap/openfga/model.json
+    volumes:
+      - ./scripts/seed_openfga.py:/work/scripts/seed_openfga.py:ro
+      - ./infra/auth-bootstrap/openfga:/work/infra/auth-bootstrap/openfga:ro
+    depends_on:
+      - openfga
+    restart: "no"
+    command: ["python", "/work/scripts/seed_openfga.py"]
+
+  hosted-facilitator:
+    build:
+      context: ./.
+      dockerfile: Dockerfile
+    env_file:
+      - path: hosted.env
+        required: true
+    environment:
+      OMNICLAW_X402_FACILITATOR_HOST: 0.0.0.0
+      OMNICLAW_X402_FACILITATOR_PORT: 4022
+      OMNICLAW_HOSTED_INITIALIZE_STORAGE: "true"
+      OMNICLAW_HOSTED_INTERNAL_READY_ALLOW_PRIVATE_NETWORKS: "true"
+      OMNICLAW_HOSTED_FACILITATOR_POSTGRES_DSN: postgresql://omniclaw:${OMNICLAW_POSTGRES_PASSWORD:-omniclaw}@postgres:5432/omniclaw
+      OMNICLAW_HOSTED_CONTROL_PLANE_POSTGRES_DSN: postgresql://omniclaw:${OMNICLAW_POSTGRES_PASSWORD:-omniclaw}@postgres:5432/omniclaw
+      OMNICLAW_HOSTED_SELLER_ACCOUNTS_POSTGRES_DSN: postgresql://omniclaw:${OMNICLAW_POSTGRES_PASSWORD:-omniclaw}@postgres:5432/omniclaw
+      OMNICLAW_HOSTED_RATE_LIMIT_REDIS_URL: redis://redis:6379/0
+      OMNICLAW_HOSTED_OIDC_ISSUER: http://127.0.0.1:8081/realms/omniclaw
+      OMNICLAW_HOSTED_OIDC_AUDIENCE: omniclaw-ops
+      OMNICLAW_HOSTED_OIDC_JWKS_URL: http://keycloak:8080/realms/omniclaw/protocol/openid-connect/certs
+      OMNICLAW_HOSTED_OPENFGA_API_URL: http://openfga:8080
+      OMNICLAW_HOSTED_OPENFGA_STORE_NAME: omniclaw-facilitator
+      OMNICLAW_HOSTED_OPENFGA_ALLOW_DYNAMIC_MODEL_ID: "true"
+      OMNICLAW_HOSTED_EXACT_PROVIDER_TIMEOUT_SECONDS: "30"
+      OMNICLAW_HOSTED_POSTGRES_POOL_SIZE: "10"
+      OMNICLAW_HOSTED_POSTGRES_POOL_CHECKOUT_SECONDS: "2"
+      OMNICLAW_HOSTED_OTEL_REQUIRED: "true"
+      OMNICLAW_HOSTED_OTEL_ALLOW_INSECURE: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OMNICLAW_HOSTED_OTEL_COLLECTOR_HEALTH_URL: http://otel-collector:13133
+      OTEL_SERVICE_NAME: omniclaw-hosted-facilitator
+      OMNICLAW_HOSTED_JSON_LOGS: "true"
+    ports:
+      - "127.0.0.1:4022:4022"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+      openfga-seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:4022/internal/readyz', timeout=2).read()\"",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+
+  ops-console:
+    build:
+      context: ./apps/ops-console
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      OMNICLAW_OPS_API_BASE_URL: http://hosted-facilitator:4022
+      OMNICLAW_OPS_ALLOW_INSECURE_BACKEND: "true"
+      OMNICLAW_OPS_INSECURE_BACKEND_CONTEXT: local-compose
+      OMNICLAW_OPS_PUBLIC_ORIGIN: http://127.0.0.1:3001
+      OMNICLAW_OPS_PROXY_TIMEOUT_MS: 5000
+      OMNICLAW_OPS_SESSION_SECRET: local-ops-console-session-secret-change-before-production
+      OMNICLAW_OPS_OIDC_CLIENT_ID: omniclaw-ops-console
+      OMNICLAW_OPS_OIDC_ISSUER: http://127.0.0.1:8081/realms/omniclaw
+      OMNICLAW_OPS_OIDC_AUTHORIZATION_URL: http://127.0.0.1:8081/realms/omniclaw/protocol/openid-connect/auth
+      OMNICLAW_OPS_OIDC_TOKEN_URL: http://keycloak:8080/realms/omniclaw/protocol/openid-connect/token
+      OMNICLAW_OPS_OIDC_LOGOUT_URL: http://127.0.0.1:8081/realms/omniclaw/protocol/openid-connect/logout
+      OMNICLAW_OPS_OIDC_REDIRECT_URI: http://127.0.0.1:3001/api/auth/callback
+    ports:
+      - "127.0.0.1:3001:3001"
+    depends_on:
+      hosted-facilitator:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+
+  hosted-reconciler:
+    build:
+      context: ./.
+      dockerfile: Dockerfile
+    env_file:
+      - path: hosted.env
+        required: true
+    environment:
+      OMNICLAW_HOSTED_INITIALIZE_STORAGE: "false"
+      OMNICLAW_HOSTED_INTERNAL_READY_ALLOW_PRIVATE_NETWORKS: "true"
+      OMNICLAW_HOSTED_FACILITATOR_POSTGRES_DSN: postgresql://omniclaw:${OMNICLAW_POSTGRES_PASSWORD:-omniclaw}@postgres:5432/omniclaw
+      OMNICLAW_HOSTED_CONTROL_PLANE_POSTGRES_DSN: postgresql://omniclaw:${OMNICLAW_POSTGRES_PASSWORD:-omniclaw}@postgres:5432/omniclaw
+      OMNICLAW_HOSTED_SELLER_ACCOUNTS_POSTGRES_DSN: postgresql://omniclaw:${OMNICLAW_POSTGRES_PASSWORD:-omniclaw}@postgres:5432/omniclaw
+      OMNICLAW_HOSTED_RATE_LIMIT_REDIS_URL: redis://redis:6379/0
+      OMNICLAW_HOSTED_EXACT_PROVIDER_TIMEOUT_SECONDS: "30"
+      OMNICLAW_HOSTED_POSTGRES_POOL_SIZE: "4"
+      OMNICLAW_HOSTED_POSTGRES_POOL_CHECKOUT_SECONDS: "2"
+      OMNICLAW_HOSTED_RECONCILER_INTERVAL_SECONDS: "5"
+      OMNICLAW_HOSTED_RECONCILER_ERROR_INTERVAL_SECONDS: "30"
+      OMNICLAW_HOSTED_RECONCILER_LEASE_SECONDS: "60"
+      OMNICLAW_HOSTED_RECONCILER_LIMIT: "100"
+      OMNICLAW_HOSTED_RECONCILER_HEARTBEAT_PATH: /var/run/omniclaw/reconciler-heartbeat.json
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OMNICLAW_HOSTED_OTEL_COLLECTOR_HEALTH_URL: http://otel-collector:13133
+      OTEL_SERVICE_NAME: omniclaw-hosted-reconciler
+      OMNICLAW_HOSTED_JSON_LOGS: "true"
+    volumes:
+      - hosted-reconciler-heartbeat:/var/run/omniclaw
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+      hosted-facilitator:
+        condition: service_healthy
+    command: ["python", "scripts/start_hosted_reconciler.py"]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import datetime,json,pathlib,sys; p=pathlib.Path('/var/run/omniclaw/reconciler-heartbeat.json'); data=json.loads(p.read_text()); ts=datetime.datetime.fromisoformat(data['updatedAt']); age=(datetime.datetime.now(datetime.timezone.utc)-ts).total_seconds(); sys.exit(0 if data.get('status')=='ok' and age < 180 else 1)\"",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+
+  hosted-metrics-exporter:
+    build:
+      context: ./.
+      dockerfile: Dockerfile
+    environment:
+      OMNICLAW_HOSTED_FACILITATOR_POSTGRES_DSN: postgresql://omniclaw:${OMNICLAW_POSTGRES_PASSWORD:-omniclaw}@postgres:5432/omniclaw
+      OMNICLAW_HOSTED_FACILITATOR_HEALTH_URL: http://hosted-facilitator:4022/internal/readyz
+      OMNICLAW_HOSTED_RECONCILER_HEARTBEAT_PATH: /var/run/omniclaw/reconciler-heartbeat.json
+      OMNICLAW_HOSTED_METRICS_PORT: "9108"
+      OMNICLAW_HOSTED_CIRCLE_GATEWAY_ENVIRONMENT: ${OMNICLAW_HOSTED_CIRCLE_GATEWAY_ENVIRONMENT:-testnet}
+      OMNICLAW_HOSTED_EXACT_NETWORKS: ${OMNICLAW_HOSTED_EXACT_NETWORKS:-eip155:5042002}
+      OMNICLAW_HOSTED_EXACT_RPC_URL_EIP155_5042002: ${OMNICLAW_HOSTED_EXACT_RPC_URL_EIP155_5042002:-https://rpc.testnet.arc.network}
+      OMNICLAW_HOSTED_EXACT_SIGNER_ADDRESS: ${OMNICLAW_HOSTED_EXACT_SIGNER_ADDRESS:-0x4cfdD69a2A89B91f3c12588085f098C268Ea8631}
+      OMNICLAW_HOSTED_EXACT_SIGNER_ID: ${OMNICLAW_HOSTED_EXACT_SIGNER_ID:-hosted-exact-alpha}
+      OMNICLAW_HOSTED_EXACT_SIGNER_MIN_GAS_WEI: ${OMNICLAW_HOSTED_EXACT_SIGNER_MIN_GAS_WEI:-100000000000000}
+      OMNICLAW_HOSTED_GATEWAY_CANARY_ADDRESS: ${OMNICLAW_HOSTED_GATEWAY_CANARY_ADDRESS:-0xA6b9b6244a5Ad5FC2EF2BEB67cE04B75A0db91D7}
+      OMNICLAW_HOSTED_GATEWAY_CANARY_ID: ${OMNICLAW_HOSTED_GATEWAY_CANARY_ID:-arc-gateway-canary}
+      OMNICLAW_HOSTED_GATEWAY_CANARY_NETWORK: eip155:5042002
+      OMNICLAW_HOSTED_GATEWAY_CANARY_MIN_ATOMIC: "1000"
+      OMNICLAW_HOSTED_GATEWAY_CANARY_TIMEOUT_SECONDS: "5"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      hosted-reconciler:
+        condition: service_healthy
+    command: ["python", "scripts/hosted_metrics_exporter.py"]
+    ports:
+      - "127.0.0.1:9108:9108"
+    volumes:
+      - hosted-reconciler-heartbeat:/var/run/omniclaw:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:9108/healthz', timeout=10).read()\"",
+        ]
+      interval: 10s
+      timeout: 15s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  hosted-postgres-data:
+  hosted-redis-data:
+  hosted-prometheus-data:
+  hosted-reconciler-heartbeat:

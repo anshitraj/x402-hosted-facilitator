@@ -1,0 +1,163 @@
+groups:
+  - name: omniclaw-hosted-facilitator
+    rules:
+      - alert: OmniClawHostedMetricsExporterDown
+        expr: up{job="hosted-metrics-exporter"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: OmniClaw hosted metrics exporter is down
+          runbook: docs/runbooks/hosted-facilitator-ops.md#metrics-exporter-down
+
+      - alert: OmniClawHostedFacilitatorDown
+        expr: omniclaw_hosted_facilitator_up == 0 or absent(omniclaw_hosted_facilitator_up)
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: OmniClaw hosted facilitator health probe is failing
+          runbook: docs/runbooks/hosted-facilitator-ops.md#facilitator-down
+
+      - alert: OmniClawHostedReconcilerDown
+        expr: omniclaw_hosted_reconciler_heartbeat_age_seconds > 180 or absent(omniclaw_hosted_reconciler_heartbeat_age_seconds)
+        for: 3m
+        labels:
+          severity: page
+        annotations:
+          summary: Hosted settlement reconciler heartbeat is stale
+          runbook: docs/runbooks/hosted-facilitator-ops.md#reconciler-down
+
+      - alert: OmniClawHostedMetricsExporterScrapeFailure
+        expr: omniclaw_hosted_metrics_exporter_scrape_success == 0 or absent(omniclaw_hosted_metrics_exporter_scrape_success)
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Hosted metrics exporter cannot collect one or more dependency metrics
+          runbook: docs/runbooks/hosted-facilitator-ops.md#metrics-exporter-scrape-failure
+
+      - alert: OmniClawHostedUnknownSettlementSpike
+        expr: sum(rate(omniclaw_hosted_settle_unknown_outcomes_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Hosted facilitator is producing unknown settlement outcomes
+          runbook: docs/runbooks/hosted-facilitator-ops.md#unknown-settlement-backlog
+
+      - alert: OmniClawHostedUnknownSettlementBacklog
+        expr: omniclaw_hosted_settlement_oldest_age_seconds{status="unknown"} > 300
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Hosted facilitator has stale unknown settlements
+          runbook: docs/runbooks/hosted-facilitator-ops.md#unknown-settlement-backlog
+
+      - alert: OmniClawHostedManualReviewBacklog
+        expr: omniclaw_hosted_settlement_oldest_age_seconds{status="manual_review"} > 900
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Hosted facilitator manual-review backlog is aging
+          runbook: docs/runbooks/hosted-facilitator-ops.md#manual-review-backlog
+
+      - alert: OmniClawHostedSubmittedSettlementBacklog
+        expr: omniclaw_hosted_settlement_oldest_age_seconds{status="submitted"} > 300
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Hosted facilitator has stale submitted settlements
+          runbook: docs/runbooks/hosted-facilitator-ops.md#submitted-settlement-backlog
+
+      - alert: OmniClawHostedSettleInProgressBacklog
+        expr: omniclaw_hosted_settlement_oldest_age_seconds{status="settle_in_progress"} > 180
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Hosted facilitator has stale in-progress settlements
+          runbook: docs/runbooks/hosted-facilitator-ops.md#settle-in-progress-backlog
+
+      - alert: OmniClawHostedProviderErrors
+        expr: |
+          (
+            sum(rate(omniclaw_hosted_settle_requests_total{status!="settled"}[5m])) by (provider, network)
+            /
+            clamp_min(sum(rate(omniclaw_hosted_settle_requests_total[5m])) by (provider, network), 0.001)
+          ) > 0.05
+          and
+          sum(rate(omniclaw_hosted_settle_requests_total[5m])) by (provider, network) > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Hosted facilitator provider error rate is above 5 percent
+          runbook: docs/runbooks/hosted-facilitator-ops.md#provider-error-spike
+
+      - alert: OmniClawHostedDuplicateSettleSpike
+        expr: sum(rate(omniclaw_hosted_settle_requests_total{duplicate="true"}[1m])) > 10
+        for: 2m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Duplicate settle traffic is elevated
+          runbook: docs/runbooks/hosted-facilitator-ops.md#duplicate-settle-spike
+
+      - alert: OmniClawHostedExactSignerGasLow
+        expr: omniclaw_hosted_exact_signer_above_min == 0 or absent(omniclaw_hosted_exact_signer_above_min)
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Hosted exact signer gas balance is below the configured floor
+          runbook: docs/runbooks/hosted-facilitator-ops.md#signer-low-gas
+
+      - alert: OmniClawHostedExactSignerGasReserveLow
+        expr: |
+          omniclaw_hosted_exact_signer_min_native_wei > 0
+          and on(network, signer_id)
+          (omniclaw_hosted_exact_signer_native_wei / omniclaw_hosted_exact_signer_min_native_wei < 2)
+          and on(network, signer_id)
+          (omniclaw_hosted_exact_signer_above_min == 1)
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Hosted exact signer gas balance is below 2x reserve
+          runbook: docs/runbooks/hosted-facilitator-ops.md#signer-low-gas
+
+      - alert: OmniClawHostedGatewayCanaryBalanceLow
+        expr: omniclaw_hosted_gateway_canary_above_min == 0 or absent(omniclaw_hosted_gateway_canary_above_min)
+        for: 2m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Hosted Gateway canary balance is below the configured floor
+          runbook: docs/runbooks/hosted-facilitator-ops.md#gateway-buyer-balance-low
+
+      - alert: OmniClawHostedGatewayCanaryReserveLow
+        expr: |
+          omniclaw_hosted_gateway_canary_min_atomic > 0
+          and on(network, canary_id)
+          (omniclaw_hosted_gateway_canary_available_atomic / omniclaw_hosted_gateway_canary_min_atomic < 2)
+          and on(network, canary_id)
+          (omniclaw_hosted_gateway_canary_above_min == 1)
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Hosted Gateway canary balance is below 2x reserve
+          runbook: docs/runbooks/hosted-facilitator-ops.md#gateway-buyer-balance-low
+
+      - alert: OmniClawHostedOtelCollectorUnavailable
+        expr: up{job="otel-collector-exported-metrics"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: OpenTelemetry collector is unavailable
+          runbook: docs/runbooks/hosted-facilitator-ops.md#otel-collector-unavailable

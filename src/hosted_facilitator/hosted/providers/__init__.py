@@ -1,0 +1,1 @@
+"""Hosted facilitator provider adapters."""

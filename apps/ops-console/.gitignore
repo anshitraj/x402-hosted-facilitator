@@ -1,0 +1,8 @@
+.next/
+.npm-cache/
+node_modules/
+out/
+*.tsbuildinfo
+test-results/
+playwright-report/
+.playwright/

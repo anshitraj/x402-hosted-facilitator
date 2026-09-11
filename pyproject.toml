@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "omniclaw-hosted-facilitator"
+version = "0.1.0"
+description = "Standalone hosted x402 facilitator service"
+requires-python = ">=3.10"
+dependencies = [
+    "cryptography==44.0.0",
+    "fastapi>=0.100.0",
+    "httpx>=0.28.1",
+    "opentelemetry-api>=1.41.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.41.1",
+    "opentelemetry-sdk>=1.41.1",
+    "psycopg[binary]>=3.2.0",
+    "pydantic==2.12.0",
+    "redis==7.1.0",
+    "uvicorn[standard]>=0.20.0",
+    "web3>=7.0.0",
+    "x402[evm,fastapi,httpx]>=2.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.14.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests", "scripts", "examples"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hosted_facilitator"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "src"]
+asyncio_mode = "auto"
+addopts = "-p no:pytest_ethereum"
+markers = [
+    "live_postgres: tests that require a reachable real Postgres database; defaults to the local compose e2e DSN",
+]

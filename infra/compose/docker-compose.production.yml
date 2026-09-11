@@ -1,0 +1,156 @@
+services:
+  hosted-facilitator:
+    image: ${OMNICLAW_HOSTED_FACILITATOR_IMAGE:?set OMNICLAW_HOSTED_FACILITATOR_IMAGE}
+    restart: unless-stopped
+    env_file:
+      - ${OMNICLAW_HOSTED_API_ENV_FILE:?set OMNICLAW_HOSTED_API_ENV_FILE}
+    environment:
+      OMNICLAW_HOSTED_INITIALIZE_STORAGE: "true"
+    command:
+      [
+        "sh",
+        "-c",
+        "if [ \"$${OMNICLAW_HOSTED_FACILITATOR_MODE}\" = \"production\" ]; then python -m hosted_facilitator.hosted.production_env || exit 1; fi; exec python scripts/start_hosted_exact_facilitator.py",
+      ]
+    ports:
+      - "${OMNICLAW_HOSTED_FACILITATOR_BIND:-127.0.0.1:4022}:4022"
+    volumes:
+      - hosted-reconciler-heartbeat:/var/run/omniclaw:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python - <<'PY'\nimport urllib.request\nurllib.request.urlopen('http://127.0.0.1:4022/internal/readyz', timeout=3)\nPY",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - hosted-private
+
+  hosted-reconciler:
+    image: ${OMNICLAW_HOSTED_FACILITATOR_IMAGE:?set OMNICLAW_HOSTED_FACILITATOR_IMAGE}
+    restart: unless-stopped
+    env_file:
+      - ${OMNICLAW_HOSTED_API_ENV_FILE:?set OMNICLAW_HOSTED_API_ENV_FILE}
+    command:
+      [
+        "sh",
+        "-c",
+        "if [ \"$${OMNICLAW_HOSTED_FACILITATOR_MODE}\" = \"production\" ]; then python -m hosted_facilitator.hosted.production_env || exit 1; fi; exec python scripts/start_hosted_reconciler.py",
+      ]
+    volumes:
+      - hosted-reconciler-heartbeat:/var/run/omniclaw
+    depends_on:
+      hosted-facilitator:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import datetime,json,pathlib,sys; p=pathlib.Path('/var/run/omniclaw/reconciler-heartbeat.json'); data=json.loads(p.read_text()); ts=datetime.datetime.fromisoformat(data['updatedAt']); age=(datetime.datetime.now(datetime.timezone.utc)-ts).total_seconds(); sys.exit(0 if data.get('status')=='ok' and age < 180 else 1)\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - hosted-private
+
+  hosted-metrics-exporter:
+    image: ${OMNICLAW_HOSTED_FACILITATOR_IMAGE:?set OMNICLAW_HOSTED_FACILITATOR_IMAGE}
+    restart: unless-stopped
+    env_file:
+      - ${OMNICLAW_HOSTED_METRICS_ENV_FILE:?set OMNICLAW_HOSTED_METRICS_ENV_FILE}
+    command: ["python", "scripts/hosted_metrics_exporter.py"]
+    ports:
+      - "${OMNICLAW_HOSTED_METRICS_BIND:-127.0.0.1:9108}:9108"
+    volumes:
+      - hosted-reconciler-heartbeat:/var/run/omniclaw:ro
+    depends_on:
+      hosted-facilitator:
+        condition: service_healthy
+      hosted-reconciler:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python - <<'PY'\nimport urllib.request\nurllib.request.urlopen('http://127.0.0.1:9108/readyz', timeout=10)\nPY",
+        ]
+      interval: 15s
+      timeout: 15s
+      retries: 5
+      start_period: 20s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - hosted-private
+
+  ops-console:
+    image: ${OMNICLAW_HOSTED_OPS_CONSOLE_IMAGE:?set OMNICLAW_HOSTED_OPS_CONSOLE_IMAGE}
+    restart: unless-stopped
+    env_file:
+      - ${OMNICLAW_OPS_ENV_FILE:?set OMNICLAW_OPS_ENV_FILE}
+    ports:
+      - "${OMNICLAW_OPS_BIND:-127.0.0.1:3001}:3001"
+    depends_on:
+      hosted-facilitator:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - hosted-private
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ../prometheus/prometheus.production.yml:/etc/prometheus/prometheus.yml:ro
+      - ../alerts/hosted-facilitator-alerts.production.yaml:/etc/prometheus/rules/hosted-facilitator-alerts.yaml:ro
+      - hosted-prometheus-data:/prometheus
+    ports:
+      - "${OMNICLAW_PROMETHEUS_BIND:-127.0.0.1:9090}:9090"
+    depends_on:
+      hosted-metrics-exporter:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - hosted-private
+
+networks:
+  hosted-private:
+    driver: bridge
+
+volumes:
+  hosted-reconciler-heartbeat:
+  hosted-prometheus-data:

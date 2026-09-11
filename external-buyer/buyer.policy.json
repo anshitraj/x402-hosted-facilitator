@@ -1,0 +1,36 @@
+{
+  "version": "2.0",
+  "tokens": {
+    "payment-agent-token": {
+      "wallet_alias": "payment-agent",
+      "active": true,
+      "label": "External Buyer Agent"
+    }
+  },
+  "wallets": {
+    "payment-agent": {
+      "name": "External Buyer Agent",
+      "wallet_id": "80b09e7c-07db-5867-b12b-14d3c7b8f1ce",
+      "address": "0x1c3c4c77088494fbc3f9ce1e87bfd7b4cfec0e18",
+      "limits": {
+        "daily_max": "10.00",
+        "hourly_max": "5.00",
+        "per_tx_max": "1.00",
+        "per_tx_min": "0.000001"
+      },
+      "rate_limits": {
+        "per_minute": 10,
+        "per_hour": 100
+      },
+      "recipients": {
+        "mode": "whitelist",
+        "addresses": [],
+        "domains": [
+          "localhost",
+          "127.0.0.1"
+        ]
+      },
+      "confirm_threshold": null
+    }
+  }
+}

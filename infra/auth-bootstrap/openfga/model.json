@@ -1,0 +1,77 @@
+{
+  "schema_version": "1.1",
+  "type_definitions": [
+    {
+      "type": "user"
+    },
+    {
+      "type": "ops_console",
+      "relations": {
+        "support_operator": {
+          "this": {}
+        },
+        "auditor": {
+          "this": {}
+        },
+        "ops_admin": {
+          "this": {}
+        },
+        "security_admin": {
+          "this": {}
+        },
+        "settlement_operator": {
+          "this": {}
+        },
+        "manual_reviewer": {
+          "this": {}
+        }
+      },
+      "metadata": {
+        "relations": {
+          "support_operator": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              }
+            ]
+          },
+          "auditor": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              }
+            ]
+          },
+          "ops_admin": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              }
+            ]
+          },
+          "security_admin": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              }
+            ]
+          },
+          "settlement_operator": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              }
+            ]
+          },
+          "manual_reviewer": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "realm": "omniclaw",
+  "enabled": true,
+  "displayName": "OmniClaw Facilitator",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "clients": [
+    {
+      "clientId": "omniclaw-ops-console",
+      "name": "OmniClaw Ops Console",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "implicitFlowEnabled": false,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "http://127.0.0.1:3001/api/auth/callback",
+        "http://localhost:3001/api/auth/callback",
+        "http://127.0.0.1:13001/api/auth/callback",
+        "http://localhost:13001/api/auth/callback",
+        "https://ops.omniclaw.ai/api/auth/callback"
+      ],
+      "webOrigins": [
+        "http://127.0.0.1:3001",
+        "http://localhost:3001",
+        "http://127.0.0.1:13001",
+        "http://localhost:13001",
+        "https://ops.omniclaw.ai"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "omniclaw-ops-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "omniclaw-ops",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "id": "ops-alpha-admin",
+      "username": "ops@omniclaw.ai",
+      "email": "ops@omniclaw.ai",
+      "firstName": "OmniClaw",
+      "lastName": "Ops",
+      "emailVerified": true,
+      "enabled": true,
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "omniclaw-alpha-admin",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

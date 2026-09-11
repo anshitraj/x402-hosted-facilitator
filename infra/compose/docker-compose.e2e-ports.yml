@@ -1,0 +1,41 @@
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:15432:5432"
+
+  otel-collector:
+    ports: !reset []
+
+  prometheus:
+    ports: !override
+      - "127.0.0.1:19090:9090"
+
+  keycloak:
+    environment:
+      KC_HOSTNAME: http://127.0.0.1:18081
+    ports: !override
+      - "127.0.0.1:18081:8080"
+
+  openfga:
+    ports: !override
+      - "127.0.0.1:18082:8080"
+
+  hosted-facilitator:
+    environment:
+      OMNICLAW_HOSTED_OIDC_ISSUER: http://127.0.0.1:18081/realms/omniclaw
+    ports: !override
+      - "127.0.0.1:14022:4022"
+
+  ops-console:
+    environment:
+      OMNICLAW_OPS_PUBLIC_ORIGIN: http://127.0.0.1:13001
+      OMNICLAW_OPS_OIDC_ISSUER: http://127.0.0.1:18081/realms/omniclaw
+      OMNICLAW_OPS_OIDC_AUTHORIZATION_URL: http://127.0.0.1:18081/realms/omniclaw/protocol/openid-connect/auth
+      OMNICLAW_OPS_OIDC_LOGOUT_URL: http://127.0.0.1:18081/realms/omniclaw/protocol/openid-connect/logout
+      OMNICLAW_OPS_OIDC_REDIRECT_URI: http://127.0.0.1:13001/api/auth/callback
+    ports: !override
+      - "127.0.0.1:13001:3001"
+
+  hosted-metrics-exporter:
+    ports: !override
+      - "127.0.0.1:19108:9108"

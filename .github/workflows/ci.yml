@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: omniclaw
+          POSTGRES_USER: omniclaw
+          POSTGRES_PASSWORD: omniclaw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U omniclaw -d omniclaw"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Check smoke script syntax
+        run: |
+          bash -n scripts/hosted_facilitator_readiness.sh
+          bash -n scripts/hosted_facilitator_tunnel_smoke.sh
+          bash -n scripts/hosted_facilitator_smoke.sh
+      - name: Lint
+        run: uv run --extra dev ruff check src tests scripts examples
+      - name: Format
+        run: uv run --extra dev ruff format --check src tests scripts examples
+      - name: Test
+        env:
+          OMNICLAW_HOSTED_FACILITATOR_MODE: test
+          OMNICLAW_TEST_POSTGRES_DSN: postgresql://omniclaw:omniclaw@127.0.0.1:5432/omniclaw
+        run: uv run --extra dev python -m pytest -q
+
+  ops-console:
+    name: Ops Console
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/ops-console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/ops-console/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e:ui
